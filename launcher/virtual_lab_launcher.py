@@ -1,12 +1,12 @@
 # MMT Virtual Lab — Minimal Qt Launcher (PySide6)
-# Faster launch path (native subprocess) + buffering dialog while GRC loads.
+# Optimized: instant "Opening…" dialog, background launch thread, in-memory caching, min display time.
 # Button 1: open selected .grc via: pythonw.exe -m gnuradio.grc "<file>"
 # Button 2: open blank GRC via:      pythonw.exe -m gnuradio.grc
 
-import os, sys, glob, json, string as _s, shlex, subprocess
+import os, sys, json, shlex, subprocess, time
 from pathlib import Path
 from typing import Optional, Tuple, List
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, QThread, QObject, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QComboBox, QPushButton,
@@ -18,7 +18,8 @@ APP_TITLE = "MMT Virtual Lab – GNU Radio"
 APP_BRAND  = "MMT Virtual Lab"
 PRIMARY = "#0A66C2"; SURFACE = "#FFFFFF"; TEXT = "#111111"; MUTED = "#6B7280"; ACCENT_BG = "#F3F6FB"
 
-# If this shortcut exists on your machine, we resolve and prefer it first
+# ----- Tweak these -----
+CLOSE_AFTER_SUCCESS_MS = 2000  # increase/decrease to control how long the "Opening..." stays visible on success
 PREFERRED_LNK = r"C:\Users\Jaswanth Royal\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\GNU Radio 3.9.4\GNU Radio.lnk"
 
 EXPERIMENTS = {
@@ -43,7 +44,7 @@ QPushButton.Primary {{ background: {PRIMARY}; color: white; padding: 10px 14px; 
 QPushButton.Primary:hover {{ background: #0853a0; }}
 """
 
-# --------------------- basics ---------------------
+# --------------------- basics & caches ---------------------
 def app_base_dir() -> Path: return Path(os.path.abspath(sys.argv[0])).parent
 def _ext(p: str) -> str:    return Path(p).suffix.lower()
 def _cfg_dir() -> Path:
@@ -58,6 +59,12 @@ def _save_json(p: Path, data: dict):
     try: p.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception: pass
 
+# in-memory hot cache (fast)
+_MEM = {
+    "grc_path": None,       # str or None
+    "exp_dir":  None        # Path or None
+}
+
 def _is_grc_launcher(path: str) -> bool:
     if not path or not os.path.exists(path): return False
     p = Path(path); name = p.name.lower()
@@ -68,24 +75,23 @@ def _is_grc_launcher(path: str) -> bool:
         return p.stem.lower().startswith("gnuradio-companion")
     return False
 
-def _cache_get_grc() -> str | None:
+def _cache_get_grc_disk() -> str | None:
     p=_cfg_path()
     if p.exists():
         val=_load_json(p).get("grc_path")
         if _is_grc_launcher(val): return val
     return None
-def _cache_set_grc(path: str):
+def _cache_set_grc_disk(path: str):
     if _is_grc_launcher(path): _save_json(_cfg_path(), {"grc_path": path})
-def _cache_get_expdir() -> Path | None:
+def _cache_get_expdir_disk() -> Path | None:
     p=_exp_cache_path()
     if p.exists():
         d=_load_json(p).get("dir")
         if d and Path(d).is_dir(): return Path(d)
     return None
-def _cache_set_expdir(d: Path):
+def _cache_set_expdir_disk(d: Path):
     if d and d.is_dir(): _save_json(_exp_cache_path(), {"dir": str(d)})
-def _looks_like_experiments_dir(d: Path) -> bool:
-    return bool(d and d.is_dir() and any(d.glob("*.grc")))
+
 def _which(cmd: list[str]) -> str | None:
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, shell=False)
@@ -120,33 +126,44 @@ def _resolve_shortcut(lnk_path: str):
 
 # --------------- experiments dir ---------------
 def resolve_experiments_dir() -> Path | None:
+    if _MEM["exp_dir"] and _MEM["exp_dir"].is_dir():
+        return _MEM["exp_dir"]
     envd=os.getenv("MMT_EXPERIMENTS_DIR")
     if envd:
         d=Path(envd)
-        if _looks_like_experiments_dir(d): _cache_set_expdir(d); return d
-    d=_cache_get_expdir()
-    if d and _looks_like_experiments_dir(d): return d
+        if d.is_dir() and any(d.glob("*.grc")):
+            _MEM["exp_dir"]=d; _cache_set_expdir_disk(d); return d
+    d=_cache_get_expdir_disk()
+    if d and d.is_dir() and any(d.glob("*.grc")):
+        _MEM["exp_dir"]=d; return d
     d=app_base_dir()/ "experiments"
-    if _looks_like_experiments_dir(d): _cache_set_expdir(d); return d
+    if d.is_dir() and any(d.glob("*.grc")):
+        _MEM["exp_dir"]=d; _cache_set_expdir_disk(d); return d
     for p in [Path.home()/ "Downloads/mmt-virtual-lab/experiments",
               Path.home()/ "mmt-virtual-lab/experiments"]:
         p=Path(p)
-        if _looks_like_experiments_dir(p): _cache_set_expdir(p); return p
+        if p.is_dir() and any(p.glob("*.grc")):
+            _MEM["exp_dir"]=p; _cache_set_expdir_disk(p); return p
     return None
 
 # --------------- find GRC (exe or .lnk) ---------------
 def find_gnuradio_companion() -> str | None:
+    if _MEM["grc_path"] and _is_grc_launcher(_MEM["grc_path"]):
+        return _MEM["grc_path"]
     try:
         if PREFERRED_LNK and _is_grc_launcher(PREFERRED_LNK):
             tgt,_,_= _resolve_shortcut(PREFERRED_LNK)
-            _cache_set_grc(tgt or PREFERRED_LNK); return tgt or PREFERRED_LNK
+            _MEM["grc_path"]=tgt or PREFERRED_LNK; _cache_set_grc_disk(_MEM["grc_path"]); return _MEM["grc_path"]
     except Exception: pass
     override=os.getenv("MMT_GRC_PATH")
-    if _is_grc_launcher(override): _cache_set_grc(override); return override
-    cached=_cache_get_grc()
-    if cached: return cached
+    if _is_grc_launcher(override):
+        _MEM["grc_path"]=override; _cache_set_grc_disk(override); return override
+    cached=_cache_get_grc_disk()
+    if cached:
+        _MEM["grc_path"]=cached; return cached
     path = _which(["where","gnuradio-companion.cmd"]) or _which(["where","gnuradio-companion"]) or _which(["where","gnuradio-companion.exe"])
-    if _is_grc_launcher(path): _cache_set_grc(path); return path
+    if _is_grc_launcher(path):
+        _MEM["grc_path"]=path; _cache_set_grc_disk(path); return path
     for c in [
         r"C:\GNURadio-3.10\bin\gnuradio-companion.cmd",
         r"C:\GNURadio-3.10\bin\gnuradio-companion.exe",
@@ -155,7 +172,8 @@ def find_gnuradio_companion() -> str | None:
         r"C:\Program Files\GNURadio\bin\gnuradio-companion.exe",
         r"C:\Program Files\GNURadio\bin\gnuradio-companion.cmd",
     ]:
-        if _is_grc_launcher(c): _cache_set_grc(c); return c
+        if _is_grc_launcher(c):
+            _MEM["grc_path"]=c; _cache_set_grc_disk(c); return c
     return None
 
 # --------------- FAST native spawner (avoids PowerShell) ---------------
@@ -164,8 +182,7 @@ def _start_process_native(file_path: str, args: list[str] | None = None, workdir
         argv = [file_path] + (args or [])
         creationflags = 0
         if os.name == "nt":
-            # Hide any console if we use python.exe; pythonw.exe has no console anyway
-            creationflags = 0x08000000  # CREATE_NO_WINDOW
+            creationflags = 0x08000000  # CREATE_NO_WINDOW (hide console if python.exe)
         subprocess.Popen(
             argv,
             cwd=(workdir or str(Path(file_path).parent)),
@@ -181,8 +198,7 @@ def _start_process_native(file_path: str, args: list[str] | None = None, workdir
 # --------------- choose best way to open WITH/without a .grc ---------------
 def _pick_module_launch(grc_launcher: str) -> tuple[str, list[str], str]:
     """
-    For opening GRC (with or without a file), prefer pythonw/python:
-      pythonw.exe -m gnuradio.grc [<file>]
+    Prefer pythonw/python to run: -m gnuradio.grc [<file>]
     Returns (file_path, base_args, working_dir)
     """
     if _ext(grc_launcher) == ".lnk":
@@ -200,7 +216,7 @@ def _pick_module_launch(grc_launcher: str) -> tuple[str, list[str], str]:
     if pye.exists():
         return str(pye), ["-m", "gnuradio.grc"], str(bin_dir)
 
-    # Fallback: use the original launcher (may ignore args on some builds)
+    # Fallback: original launcher (args may be ignored on some builds)
     return str(base), [], str(bin_dir)
 
 def _open_with_file_fast(grc_launcher: str, grc_file: str) -> tuple[bool, str]:
@@ -212,6 +228,44 @@ def _open_blank_fast(grc_launcher: str) -> tuple[bool, str]:
     prog, base_args, wd = _pick_module_launch(grc_launcher)
     return _start_process_native(prog, base_args, wd)
 
+# --------------------- threaded launcher ---------------------
+class LaunchWorker(QObject):
+    finished = Signal(bool, str)   # ok, msg
+
+    def __init__(self, mode: str, exp_name: Optional[str] = None):
+        super().__init__()
+        self.mode = mode          # "blank" or "file"
+        self.exp_name = exp_name
+
+    def run(self):
+        try:
+            # Resolve GRC path (may be slow once; cached thereafter)
+            grc = find_gnuradio_companion()
+            if not grc:
+                self.finished.emit(False, "GNU Radio Companion was not found on this system.")
+                return
+
+            if self.mode == "file":
+                d = resolve_experiments_dir()
+                if not d:
+                    self.finished.emit(False, "Experiments folder not found.")
+                    return
+                file_abs = d / EXPERIMENTS[self.exp_name]
+                if not file_abs.exists():
+                    self.finished.emit(False, f"Flowgraph not found: {file_abs}")
+                    return
+                ok, msg = _open_with_file_fast(grc, str(file_abs))
+                self.finished.emit(ok, msg)
+                return
+
+            # blank
+            ok, msg = _open_blank_fast(grc)
+            self.finished.emit(ok, msg)
+
+        except Exception as e:
+            # Guarantee we always signal the UI to close the spinner
+            self.finished.emit(False, f"Unexpected error: {type(e).__name__}: {e}")
+
 # --------------------- UI ---------------------
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -220,9 +274,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 500)
         self.setWindowIcon(QIcon())
         self.status = QStatusBar(); self.setStatusBar(self.status)
+        self._active_dlg = None  # track any active buffering dialog
         self._build_ui()
         self.setStyleSheet(QSS)
-        # Pre-warm path discovery so first click feels instant
+        # Pre-warm (runs on UI thread but very quick thanks to caching)
         self._prewarm()
 
     def _build_ui(self):
@@ -244,8 +299,7 @@ class MainWindow(QMainWindow):
         card_l.addWidget(section)
 
         self.combo = QComboBox()
-        for name in EXPERIMENTS:
-            self.combo.addItem(name)
+        for name in EXPERIMENTS: self.combo.addItem(name)
         card_l.addWidget(self.combo)
 
         self.btn_open = QPushButton("Open GNU Radio"); self.btn_open.setObjectName("Primary"); self.btn_open.setProperty("class","Primary")
@@ -265,71 +319,115 @@ class MainWindow(QMainWindow):
         outer.addLayout(footer)
 
     def _prewarm(self):
-        try: _ = find_gnuradio_companion()
+        try: _MEM["grc_path"] = find_gnuradio_companion()
         except Exception: pass
-        try: _ = resolve_experiments_dir()
+        try: _MEM["exp_dir"]  = resolve_experiments_dir()
         except Exception: pass
 
-    # Button 1: open selected .grc using python[w] -m gnuradio.grc "<file>"
+    # ---------- buffering dialog helpers ----------
+    def _show_buffering(self, text: str = "Opening GNU Radio…") -> tuple[QProgressDialog, float]:
+        dlg = QProgressDialog(text, None, 0, 0, self)
+        dlg.setWindowTitle("Please wait")
+        dlg.setCancelButton(None)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)     # show immediately
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.show()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        return dlg, time.monotonic()
+
+    def _close_buffering_after(self, dlg: QProgressDialog, delay_ms: int):
+        def _finish():
+            try:
+                if dlg and dlg.isVisible():
+                    dlg.close()
+            except Exception:
+                pass
+            QApplication.restoreOverrideCursor()
+            self._active_dlg = None
+        QTimer.singleShot(delay_ms, _finish)
+
+
+    # ---------- thread orchestration ----------
+    def _launch_in_thread(self, mode: str, exp_name: Optional[str] = None):
+        # Close any previously stuck dialog (paranoia)
+        if self._active_dlg is not None:
+            try: self._active_dlg.close()
+            except Exception: pass
+            QApplication.restoreOverrideCursor()
+            self._active_dlg = None
+
+        # 1) Show buffering immediately (GUI thread)
+        dlg, t0 = self._show_buffering("Opening GNU Radio…")
+        self._active_dlg = dlg  # keep a handle for safety
+
+        # 2) Prepare worker + thread
+        self._thr = QThread(self)
+        self._wrk = LaunchWorker(mode=mode, exp_name=exp_name)
+        self._wrk.moveToThread(self._thr)
+
+        self._thr.started.connect(self._wrk.run)
+
+        def on_finished(ok: bool, msg: str):
+            # Runs on GUI thread (QueuedConnection)
+            self._post_to_gui(lambda: self.status.showMessage(msg, 8000))
+            if not ok:
+                # Close immediately on failure
+                try:
+                    if dlg and dlg.isVisible():
+                        dlg.close()
+                except Exception:
+                    pass
+                QApplication.restoreOverrideCursor()
+                self._active_dlg = None
+                QMessageBox.critical(self, "Launch failed", msg)
+            else:
+                # Close after minimum buffer on success
+                self._close_buffering_after(dlg, CLOSE_AFTER_SUCCESS_MS)
+            self._thr.quit()
+
+        # Force queued delivery of the finish signal
+        self._wrk.finished.connect(on_finished, type=Qt.QueuedConnection)
+
+        # SAFETY NET: if the thread finishes for any reason and dialog is still up, close it.
+        def _safety_close():
+            try:
+                if dlg and dlg.isVisible():
+                    dlg.close()
+                QApplication.restoreOverrideCursor()
+            except Exception:
+                pass
+            self._active_dlg = None
+
+        self._thr.finished.connect(self._wrk.deleteLater, type=Qt.QueuedConnection)
+        self._thr.finished.connect(self._thr.deleteLater, type=Qt.QueuedConnection)
+        self._thr.finished.connect(_safety_close, type=Qt.QueuedConnection)
+
+        self._thr.start()
+
+    # Button 1: open selected .grc (threaded)
     def on_open(self):
-        exp_dir = resolve_experiments_dir()
-        if not exp_dir:
-            self.status.showMessage("Experiments folder not found.", 6000)
-            QMessageBox.critical(self, "Experiments not found", "Could not locate the 'experiments' folder.")
-            return
-
         name = self.combo.currentText()
-        file_abs = exp_dir / EXPERIMENTS[name]
-        if not file_abs.exists():
-            self.status.showMessage("Selected flowgraph missing.", 6000)
-            QMessageBox.critical(self, "Flowgraph missing", f"Could not find:\n{file_abs}")
-            return
+        # Show buffering FIRST, then worker will validate exp path & launch
+        self._launch_in_thread("file", exp_name=name)
 
-        grc = find_gnuradio_companion()
-        if not grc:
-            QMessageBox.critical(self, "App not found", "GNU Radio Companion was not found on this system.")
-            return
-
-        dlg = QProgressDialog("Opening GNU Radio…", None, 0, 0, self)
-        dlg.setWindowTitle("Please wait")
-        dlg.setCancelButton(None)
-        dlg.setWindowModality(Qt.WindowModal)
-        dlg.setMinimumDuration(0)
-        dlg.show()
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        try:
-            ok, msg = _open_with_file_fast(grc, str(file_abs))
-            self.status.showMessage(msg, 8000)
-            if not ok:
-                QMessageBox.critical(self, "Launch failed", f"{msg}")
-        finally:
-            dlg.close()
-            QApplication.restoreOverrideCursor()
-
-    # Button 2: open blank GRC via python[w] -m gnuradio.grc (no args)
+    # Button 2: open blank (threaded)
     def on_open_blank(self):
-        grc = find_gnuradio_companion()
-        if not grc:
-            QMessageBox.critical(self, "App not found", "GNU Radio Companion was not found on this system.")
-            return
+        self._launch_in_thread("blank")
 
-        dlg = QProgressDialog("Opening GNU Radio…", None, 0, 0, self)
-        dlg.setWindowTitle("Please wait")
-        dlg.setCancelButton(None)
-        dlg.setWindowModality(Qt.WindowModal)
-        dlg.setMinimumDuration(0)
-        dlg.show()
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+    def _post_to_gui(self, fn):
+        QTimer.singleShot(0, fn)
 
+    # Ensure cursor/dialog are cleaned up if window is closed mid-launch
+    def closeEvent(self, event):
         try:
-            ok, msg = _open_blank_fast(grc)
-            self.status.showMessage(msg, 8000)
-            if not ok:
-                QMessageBox.critical(self, "Launch failed", f"{msg}")
-        finally:
-            dlg.close()
+            if self._active_dlg is not None:
+                self._active_dlg.close()
             QApplication.restoreOverrideCursor()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
 def main():
     app = QApplication(sys.argv)
