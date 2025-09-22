@@ -1,22 +1,24 @@
 # MMT Virtual Lab — Minimal Qt Launcher (PySide6)
-# One launch method only (PowerShell Start-Process).
-# Button 1: open selected .grc via:  pythonw.exe -m gnuradio.grc "<file>"
-# Button 2: open blank GRC (no args) via the EXE or shortcut.
+# Faster launch path (native subprocess) + buffering dialog while GRC loads.
+# Button 1: open selected .grc via: pythonw.exe -m gnuradio.grc "<file>"
+# Button 2: open blank GRC via:      pythonw.exe -m gnuradio.grc
 
 import os, sys, glob, json, string as _s, shlex, subprocess
 from pathlib import Path
+from typing import Optional, Tuple, List
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QComboBox, QPushButton,
     QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QSpacerItem, QSizePolicy,
-    QStatusBar
+    QStatusBar, QProgressDialog
 )
 
 APP_TITLE = "MMT Virtual Lab – GNU Radio"
 APP_BRAND  = "MMT Virtual Lab"
 PRIMARY = "#0A66C2"; SURFACE = "#FFFFFF"; TEXT = "#111111"; MUTED = "#6B7280"; ACCENT_BG = "#F3F6FB"
 
+# If this shortcut exists on your machine, we resolve and prefer it first
 PREFERRED_LNK = r"C:\Users\Jaswanth Royal\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\GNU Radio 3.9.4\GNU Radio.lnk"
 
 EXPERIMENTS = {
@@ -156,47 +158,41 @@ def find_gnuradio_companion() -> str | None:
         if _is_grc_launcher(c): _cache_set_grc(c); return c
     return None
 
-# --------------- PowerShell Start-Process ---------------
-def _ps_quote(s: str) -> str:
-    return "'" + s.replace("'", "''") + "'"
-
-def _ps_start_process(file_path: str, args: list[str] | None = None, workdir: str | None = None) -> tuple[bool, str]:
+# --------------- FAST native spawner (avoids PowerShell) ---------------
+def _start_process_native(file_path: str, args: list[str] | None = None, workdir: str | None = None) -> tuple[bool, str]:
     try:
-        ps = "powershell"
-        wd = workdir or str(Path(file_path).parent)
-        if args:
-            array_literal = "@(" + ",".join(_ps_quote(a) for a in args) + ")"
-            cmd = (
-                f"Start-Process -FilePath {_ps_quote(file_path)} "
-                f"-ArgumentList {array_literal} "
-                f"-WorkingDirectory {_ps_quote(wd)} -WindowStyle Normal"
-            )
-        else:
-            cmd = (
-                f"Start-Process -FilePath {_ps_quote(file_path)} "
-                f"-WorkingDirectory {_ps_quote(wd)} -WindowStyle Normal"
-            )
-        subprocess.Popen([ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd], shell=False)
-        return True, f"Start-Process: {Path(file_path).name} (wd: {wd})"
+        argv = [file_path] + (args or [])
+        creationflags = 0
+        if os.name == "nt":
+            # Hide any console if we use python.exe; pythonw.exe has no console anyway
+            creationflags = 0x08000000  # CREATE_NO_WINDOW
+        subprocess.Popen(
+            argv,
+            cwd=(workdir or str(Path(file_path).parent)),
+            shell=False,
+            creationflags=creationflags
+        )
+        return True, f"Spawn: {Path(file_path).name} {' '.join(args or [])} (wd: {workdir or Path(file_path).parent})"
+    except FileNotFoundError as e:
+        return False, f"FileNotFoundError: {e}"
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
 
-# --------------- choose best way to open WITH a .grc ---------------
+# --------------- choose best way to open WITH/without a .grc ---------------
 def _pick_module_launch(grc_launcher: str) -> tuple[str, list[str], str]:
     """
-    For opening a .grc, use pythonw/python to run: -m gnuradio.grc "<file>"
+    For opening GRC (with or without a file), prefer pythonw/python:
+      pythonw.exe -m gnuradio.grc [<file>]
     Returns (file_path, base_args, working_dir)
     """
-    # If the launcher is a .lnk, resolve to EXE and reuse its bin for python[w]
     if _ext(grc_launcher) == ".lnk":
-        tgt, lnk_args, lnk_wd = _resolve_shortcut(grc_launcher)
+        tgt, _, _ = _resolve_shortcut(grc_launcher)
         base = Path(tgt) if tgt else Path(grc_launcher)
         bin_dir = base.parent
     else:
         base = Path(grc_launcher)
         bin_dir = base.parent
 
-    # Prefer pythonw.exe (no console), else python.exe
     pyw = bin_dir / "pythonw.exe"
     pye = bin_dir / "python.exe"
     if pyw.exists():
@@ -207,24 +203,14 @@ def _pick_module_launch(grc_launcher: str) -> tuple[str, list[str], str]:
     # Fallback: use the original launcher (may ignore args on some builds)
     return str(base), [], str(bin_dir)
 
-def _open_with_file_ps(grc_launcher: str, grc_file: str) -> tuple[bool, str]:
+def _open_with_file_fast(grc_launcher: str, grc_file: str) -> tuple[bool, str]:
     prog, base_args, wd = _pick_module_launch(grc_launcher)
     args = base_args + [grc_file] if base_args else [grc_file]
-    return _ps_start_process(prog, args, wd)
+    return _start_process_native(prog, args, wd)
 
-def _open_blank_ps(grc_launcher: str) -> tuple[bool, str]:
-    # blank: launching the EXE/shortcut is fine
-    if _ext(grc_launcher) == ".lnk":
-        tgt, lnk_args, lnk_wd = _resolve_shortcut(grc_launcher)
-        if tgt and os.path.exists(tgt):
-            args = shlex.split(lnk_args) if lnk_args else []
-            return _ps_start_process(tgt, args, lnk_wd or str(Path(tgt).parent))
-        try:
-            os.startfile(grc_launcher)  # Explorer fallback
-            return True, "Opened .lnk via Explorer (blank)"
-        except Exception as e:
-            return False, f"{type(e).__name__}: {e}"
-    return _ps_start_process(grc_launcher, [], str(Path(grc_launcher).parent))
+def _open_blank_fast(grc_launcher: str) -> tuple[bool, str]:
+    prog, base_args, wd = _pick_module_launch(grc_launcher)
+    return _start_process_native(prog, base_args, wd)
 
 # --------------------- UI ---------------------
 class MainWindow(QMainWindow):
@@ -236,6 +222,8 @@ class MainWindow(QMainWindow):
         self.status = QStatusBar(); self.setStatusBar(self.status)
         self._build_ui()
         self.setStyleSheet(QSS)
+        # Pre-warm path discovery so first click feels instant
+        self._prewarm()
 
     def _build_ui(self):
         root = QWidget(); self.setCentralWidget(root)
@@ -276,6 +264,12 @@ class MainWindow(QMainWindow):
         foot = QLabel("© MakeMyTechnology"); foot.setStyleSheet(f"color: {MUTED};"); footer.addWidget(foot, 0, Qt.AlignRight)
         outer.addLayout(footer)
 
+    def _prewarm(self):
+        try: _ = find_gnuradio_companion()
+        except Exception: pass
+        try: _ = resolve_experiments_dir()
+        except Exception: pass
+
     # Button 1: open selected .grc using python[w] -m gnuradio.grc "<file>"
     def on_open(self):
         exp_dir = resolve_experiments_dir()
@@ -296,21 +290,46 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "App not found", "GNU Radio Companion was not found on this system.")
             return
 
-        ok, msg = _open_with_file_ps(grc, str(file_abs))
-        self.status.showMessage(msg, 8000)
-        if not ok:
-            QMessageBox.critical(self, "Launch failed", f"{msg}")
+        dlg = QProgressDialog("Opening GNU Radio…", None, 0, 0, self)
+        dlg.setWindowTitle("Please wait")
+        dlg.setCancelButton(None)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.show()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
-    # Button 2: open blank GRC via Start-Process (no args)
+        try:
+            ok, msg = _open_with_file_fast(grc, str(file_abs))
+            self.status.showMessage(msg, 8000)
+            if not ok:
+                QMessageBox.critical(self, "Launch failed", f"{msg}")
+        finally:
+            dlg.close()
+            QApplication.restoreOverrideCursor()
+
+    # Button 2: open blank GRC via python[w] -m gnuradio.grc (no args)
     def on_open_blank(self):
         grc = find_gnuradio_companion()
         if not grc:
             QMessageBox.critical(self, "App not found", "GNU Radio Companion was not found on this system.")
             return
-        ok, msg = _open_blank_ps(grc)
-        self.status.showMessage(msg, 8000)
-        if not ok:
-            QMessageBox.critical(self, "Launch failed", f"{msg}")
+
+        dlg = QProgressDialog("Opening GNU Radio…", None, 0, 0, self)
+        dlg.setWindowTitle("Please wait")
+        dlg.setCancelButton(None)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.show()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        try:
+            ok, msg = _open_blank_fast(grc)
+            self.status.showMessage(msg, 8000)
+            if not ok:
+                QMessageBox.critical(self, "Launch failed", f"{msg}")
+        finally:
+            dlg.close()
+            QApplication.restoreOverrideCursor()
 
 def main():
     app = QApplication(sys.argv)
