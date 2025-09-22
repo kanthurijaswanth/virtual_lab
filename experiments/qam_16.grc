@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<flow_graph>
+  <block id="options">
+    <key>options</key>
+    <param><key>author</key><value>MMT</value></param>
+    <param><key>category</key><value>MMT Virtual Lab</value></param>
+    <param><key>description</key><value>16-QAM Modulation</value></param>
+    <param><key>generate_options</key><value>qt_gui_2</value></param>
+    <param><key>id</key><value>top_block</value></param>
+    <param><key>title</key><value>16-QAM Modulation</value></param>
+    <param><key>run</key><value>True</value></param>
+  </block>
+  <block id="variable_samp_rate">
+    <key>variable</key>
+    <param><key>id</key><value>samp_rate</value></param>
+    <param><key>value</key><value>256e3</value></param>
+  </block>
+
+  <block id="blocks_vector_source_x_0">
+    <key>blocks_vector_source_x</key>
+    <param><key>type</key><value>byte</value></param>
+    <param><key>vector</key><value>list(range(0,256))</value></param>
+    <param><key>repeat</key><value>True</value></param>
+  </block>
+  <block id="blocks_unpack_k_bits_bb_0">
+    <key>blocks_unpack_k_bits_bb</key>
+    <param><key>k</key><value>4</value></param>
+  </block>
+  <block id="digital_constellation_modulator_0">
+    <key>digital_constellation_modulator</key>
+    <param><key>constellation</key><value>digital.constellation_16qam().base()</value></param>
+    <param><key>samples_per_symbol</key><value>8</value></param>
+    <param><key>excess_bw</key><value>0.35</value></param>
+  </block>
+  <block id="blocks_throttle_0">
+    <key>blocks_throttle</key>
+    <param><key>type</key><value>complex</value></param>
+    <param><key>sample_rate</key><value>samp_rate</value></param>
+  </block>
+
+  <block id="qtgui_time_sink_c_0">
+    <key>qtgui_time_sink_x</key>
+    <param><key>type</key><value>complex</value></param>
+    <param><key>name</key><value>Time</value></param>
+    <param><key>samp_rate</key><value>samp_rate</value></param>
+    <param><key>size</key><value>1024</value></param>
+  </block>
+  <block id="qtgui_freq_sink_c_0">
+    <key>qtgui_freq_sink_x</key>
+    <param><key>type</key><value>complex</value></param>
+    <param><key>name</key><value>Spectrum</value></param>
+    <param><key>samp_rate</key><value>samp_rate</value></param>
+    <param><key>fft_size</key><value>1024</value></param>
+    <param><key>ref_level</key><value>0</value></param>
+  </block>
+  <block id="qtgui_const_sink_x_0">
+    <key>qtgui_const_sink_x</key>
+    <param><key>type</key><value>complex</value></param>
+    <param><key>name</key><value>Constellation</value></param>
+    <param><key>samp_rate</key><value>samp_rate</value></param>
+    <param><key>size</key><value>1024</value></param>
+  </block>
+
+  <connection>
+    <source_block_id>blocks_vector_source_x_0</source_block_id><sink_block_id>blocks_unpack_k_bits_bb_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_unpack_k_bits_bb_0</source_block_id><sink_block_id>digital_constellation_modulator_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>digital_constellation_modulator_0</source_block_id><sink_block_id>blocks_throttle_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_throttle_0</source_block_id><sink_block_id>qtgui_time_sink_c_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_throttle_0</source_block_id><sink_block_id>qtgui_freq_sink_c_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_throttle_0</source_block_id><sink_block_id>qtgui_const_sink_x_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+  </connection>
+</flow_graph>

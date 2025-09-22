@@ -1,0 +1,85 @@
+<?xml version="1.0"?>
+<flow_graph>
+  <block id="options">
+    <key>options</key>
+    <param><key>author</key><value>MMT</value></param>
+    <param><key>category</key><value>MMT Virtual Lab</value></param>
+    <param><key>description</key><value>2-FSK (VCO-based)</value></param>
+    <param><key>generate_options</key><value>qt_gui</value></param>
+    <param><key>id</key><value>top_block</value></param>
+    <param><key>title</key><value>2-FSK (VCO-based)</value></param>
+    <param><key>run</key><value>True</value></param>
+  </block>
+  <block id="variable_samp_rate">
+    <key>variable</key>
+    <param><key>id</key><value>samp_rate</value></param>
+    <param><key>value</key><value>256e3</value></param>
+  </block>
+
+  <block id="blocks_vector_source_x_0">
+    <key>blocks_vector_source_x</key>
+    <param><key>type</key><value>byte</value></param>
+    <param><key>vector</key><value>list(range(0,256))</value></param>
+    <param><key>repeat</key><value>True</value></param>
+  </block>
+  <block id="blocks_unpack_k_bits_bb_0">
+    <key>blocks_unpack_k_bits_bb</key>
+    <param><key>k</key><value>1</value></param>
+  </block>
+  <block id="blocks_char_to_float_0">
+    <key>blocks_char_to_float</key>
+    <param><key>scale</key><value>1</value></param>
+  </block>
+  <block id="blocks_add_const_vxx_0">
+    <key>blocks_add_const_vxx</key>
+    <param><key>type</key><value>float</value></param>
+    <param><key>const</key><value>-0.5</value></param>
+  </block>
+  <block id="blocks_multiply_const_vxx_0">
+    <key>blocks_multiply_const_vxx</key>
+    <param><key>type</key><value>float</value></param>
+    <param><key>k</key><value>2.0</value></param>
+  </block>
+  <block id="analog_vco_f_0">
+    <key>analog_vco_f</key>
+    <param><key>samp_rate</key><value>samp_rate</value></param>
+    <param><key>sensitivity</key><value>2*pi*5e3</value></param>
+    <param><key>ampl</key><value>1.0</value></param>
+  </block>
+  <block id="blocks_float_to_complex_0">
+    <key>blocks_float_to_complex</key>
+  </block>
+  <block id="blocks_throttle_0">
+    <key>blocks_throttle</key>
+    <param><key>type</key><value>complex</value></param>
+    <param><key>sample_rate</key><value>samp_rate</value></param>
+  </block>
+
+  <block id="qtgui_time_sink_c_0">
+    <key>qtgui_time_sink_x</key>
+    <param><key>type</key><value>complex</value></param>
+    <param><key>name</key><value>Time</value></param>
+    <param><key>samp_rate</key><value>samp_rate</value></param>
+    <param><key>size</key><value>1024</value></param>
+  </block>
+  <block id="qtgui_freq_sink_c_0">
+    <key>qtgui_freq_sink_x</key>
+    <param><key>type</key><value>complex</value></param>
+    <param><key>name</key><value>Spectrum</value></param>
+    <param><key>samp_rate</key><value>samp_rate</value></param>
+    <param><key>fft_size</key><value>1024</value></param>
+    <param><key>ref_level</key><value>0</value></param>
+  </block>
+
+  <connection>
+    <source_block_id>blocks_vector_source_x_0</source_block_id><sink_block_id>blocks_unpack_k_bits_bb_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_unpack_k_bits_bb_0</source_block_id><sink_block_id>blocks_char_to_float_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_char_to_float_0</source_block_id><sink_block_id>blocks_add_const_vxx_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_add_const_vxx_0</source_block_id><sink_block_id>blocks_multiply_const_vxx_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_multiply_const_vxx_0</source_block_id><sink_block_id>analog_vco_f_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>analog_vco_f_0</source_block_id><sink_block_id>blocks_float_to_complex_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_float_to_complex_0</source_block_id><sink_block_id>blocks_throttle_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_throttle_0</source_block_id><sink_block_id>qtgui_time_sink_c_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_throttle_0</source_block_id><sink_block_id>qtgui_freq_sink_c_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+  </connection>
+</flow_graph>

@@ -1,0 +1,93 @@
+<?xml version="1.0"?>
+<flow_graph>
+  <block id="options">
+    <key>options</key>
+    <param><key>author</key><value>MMT</value></param>
+    <param><key>window_size</key><value></value></param>
+    <param><key>category</key><value>MMT Virtual Lab</value></param>
+    <param><key>comment</key><value></value></param>
+    <param><key>description</key><value>AM – DSB with carrier</value></param>
+    <param><key>generate_options</key><value>qt_gui</value></param>
+    <param><key>hier_block_src_path</key><value>.:</value></param>
+    <param><key>id</key><value>top_block</value></param>
+    <param><key>max_nouts</key><value>0</value></param>
+    <param><key>qt_qss_theme</key><value></value></param>
+    <param><key>realtime_scheduling</key><value></value></param>
+    <param><key>run_command</key><value></value></param>
+    <param><key>run_options</key><value>prompt</value></param>
+    <param><key>run</key><value>True</value></param>
+    <param><key>thread_safe_setters</key><value></value></param>
+    <param><key>title</key><value>AM – DSB with carrier</value></param>
+  </block>
+  <block id="variable_samp_rate">
+    <key>variable</key>
+    <param><key>comment</key><value></value></param>
+    <param><key>id</key><value>samp_rate</value></param>
+    <param><key>value</key><value>256e3</value></param>
+  </block>
+
+  <block id="analog_sig_source_x_msg">
+    <key>analog_sig_source_x</key>
+    <param><key>type</key><value>float</value></param>
+    <param><key>samp_rate</key><value>samp_rate</value></param>
+    <param><key>waveform</key><value>analog.GR_COS_WAVE</value></param>
+    <param><key>freq</key><value>1e3</value></param>
+    <param><key>ampl</key><value>0.5</value></param>
+    <param><key>offset</key><value>0</value></param>
+  </block>
+  <block id="blocks_multiply_const_vxx_0">
+    <key>blocks_multiply_const_vxx</key>
+    <param><key>type</key><value>float</value></param>
+    <param><key>k</key><value>0.5</value></param>
+  </block>
+  <block id="blocks_add_const_vxx_0">
+    <key>blocks_add_const_vxx</key>
+    <param><key>type</key><value>float</value></param>
+    <param><key>const</key><value>1.0</value></param>
+  </block>
+  <block id="analog_sig_source_x_car">
+    <key>analog_sig_source_x</key>
+    <param><key>type</key><value>float</value></param>
+    <param><key>samp_rate</key><value>samp_rate</value></param>
+    <param><key>waveform</key><value>analog.GR_COS_WAVE</value></param>
+    <param><key>freq</key><value>50e3</value></param>
+    <param><key>ampl</key><value>1.0</value></param>
+    <param><key>offset</key><value>0</value></param>
+  </block>
+  <block id="blocks_multiply_xx_0">
+    <key>blocks_multiply_xx</key>
+    <param><key>type</key><value>float</value></param>
+    <param><key>num_inputs</key><value>2</value></param>
+  </block>
+  <block id="blocks_throttle_0">
+    <key>blocks_throttle</key>
+    <param><key>type</key><value>float</value></param>
+    <param><key>sample_rate</key><value>samp_rate</value></param>
+  </block>
+
+  <block id="qtgui_time_sink_f_0">
+    <key>qtgui_time_sink_x</key>
+    <param><key>type</key><value>float</value></param>
+    <param><key>name</key><value>Time</value></param>
+    <param><key>samp_rate</key><value>samp_rate</value></param>
+    <param><key>size</key><value>1024</value></param>
+  </block>
+  <block id="qtgui_freq_sink_f_0">
+    <key>qtgui_freq_sink_x</key>
+    <param><key>type</key><value>float</value></param>
+    <param><key>name</key><value>Spectrum</value></param>
+    <param><key>samp_rate</key><value>samp_rate</value></param>
+    <param><key>fft_size</key><value>1024</value></param>
+    <param><key>ref_level</key><value>0</value></param>
+  </block>
+
+  <connection>
+    <source_block_id>analog_sig_source_x_msg</source_block_id><sink_block_id>blocks_multiply_const_vxx_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_multiply_const_vxx_0</source_block_id><sink_block_id>blocks_add_const_vxx_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_add_const_vxx_0</source_block_id><sink_block_id>blocks_multiply_xx_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>analog_sig_source_x_car</source_block_id><sink_block_id>blocks_multiply_xx_0</sink_block_id><source_key>0</source_key><sink_key>1</sink_key>
+    <source_block_id>blocks_multiply_xx_0</source_block_id><sink_block_id>blocks_throttle_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_throttle_0</source_block_id><sink_block_id>qtgui_time_sink_f_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+    <source_block_id>blocks_throttle_0</source_block_id><sink_block_id>qtgui_freq_sink_f_0</sink_block_id><source_key>0</source_key><sink_key>0</sink_key>
+  </connection>
+</flow_graph>
