@@ -457,27 +457,36 @@ class MainWindow(QMainWindow):
         # Debugging: Print the executable path
         print(f"Launching GNU Radio from: {grc_path}")
 
-        # Now we use subprocess to run the `gnuradio-companion` with the file path
         try:
-            result = subprocess.run([grc_path, str(file_abs)], capture_output=True, text=True)
+            # Launch GNU Radio Companion with the full path to the .grc file using Python
+            result = subprocess.run(
+                [grc_path, "-m", "gnuradio.grc", str(file_abs)],
+                cwd=str(Path(grc_path).parent),
+                capture_output=True,
+                text=True
+            )
+    
             if result.returncode != 0:
                 print(f"Error: {result.stderr}")  # Error message from stderr
                 print(f"Output: {result.stdout}")  # Output from stdout
             else:
-                print(f"Success: {result.stdout}")  # If successful, print stdout
-        
+                print(f"Success: {result.stdout}")
+    
             # Debugging: Check the output from the command
             print("GNU Radio Companion output:")
             print(result.stdout)  # stdout output
             print(result.stderr)  # stderr output
-        
+    
             self.status.showMessage(f"Opening {file_abs}", 8000)
+    
         except subprocess.CalledProcessError as e:
             # Capture and display the error
             self.status.showMessage(f"Failed to open GRC file: {e}", 8000)
             print(f"Error: {e}")
             print(f"Stdout: {e.stdout}")
             print(f"Stderr: {e.stderr}")
+
+
 
 
     # Button 2: open blank (threaded)
