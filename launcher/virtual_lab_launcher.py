@@ -1,9 +1,4 @@
-# MMT Virtual Lab — Minimal Qt Launcher (PySide6)
-# Optimized threading + fixed 2s buffer dialog + logo above title.
-# Button 1: open selected .grc via: pythonw.exe -m gnuradio.grc "<file>"
-# Button 2: open blank GRC via:      pythonw.exe -m gnuradio.grc
-
-import os, sys, json, shlex, subprocess, time
+import os, sys, json, subprocess, time
 from pathlib import Path
 from typing import Optional, Tuple, List
 from PySide6.QtCore import Qt, QTimer, QThread, QObject, Signal
@@ -28,6 +23,7 @@ EXPERIMENTS = {
     "Experiment 3 (2-FSK)":   "fsk_signal.grc",
     "Experiment 4 (QPSK)":    "psk_qpsk.grc",
     "Experiment 5 (16-QAM)":  "qam_16.grc",
+    "Experiment 6 (FR)":      "fm_recever.grc"
 }
 
 QSS = f"""
@@ -114,50 +110,6 @@ def _which(cmd: list[str]) -> str | None:
         pass
     return None
 
-# --------------- .lnk resolver ---------------
-def _resolve_shortcut(lnk_path: str):
-    if not os.path.exists(lnk_path): return None, "", None
-    lnk_ps = lnk_path.replace("\\", "/")
-    ps = [
-        "powershell","-NoProfile","-ExecutionPolicy","Bypass","-Command",
-        ("$w=New-Object -ComObject WScript.Shell; "
-         f"$s=$w.CreateShortcut('{lnk_ps}'); "
-         "[Console]::Out.WriteLine($s.TargetPath); "
-         "[Console]::Out.WriteLine($s.Arguments); "
-         "[Console]::Out.WriteLine($s.WorkingDirectory)")
-    ]
-    try:
-        out = subprocess.run(ps, capture_output=True, text=True)
-        lines=(out.stdout or "").splitlines()
-        tgt  =(lines[0] if len(lines)>0 else "").strip() or None
-        args =(lines[1] if len(lines)>1 else "").strip() or ""
-        wdir =(lines[2] if len(lines)>2 else "").strip() or None
-        return tgt, args, wdir
-    except Exception:
-        return None, "", None
-
-# --------------- experiments dir ---------------
-def resolve_experiments_dir() -> Path | None:
-    if _MEM["exp_dir"] and _MEM["exp_dir"].is_dir():
-        return _MEM["exp_dir"]
-    envd=os.getenv("MMT_EXPERIMENTS_DIR")
-    if envd:
-        d=Path(envd)
-        if d.is_dir() and any(d.glob("*.grc")):
-            _MEM["exp_dir"]=d; _cache_set_expdir_disk(d); return d
-    d=_cache_get_expdir_disk()
-    if d and d.is_dir() and any(d.glob("*.grc")):
-        _MEM["exp_dir"]=d; return d
-    d=app_base_dir()/ "experiments"
-    if d.is_dir() and any(d.glob("*.grc")):
-        _MEM["exp_dir"]=d; _cache_set_expdir_disk(d); return d
-    for p in [Path.home()/ "Downloads/mmt-virtual-lab/experiments",
-              Path.home()/ "mmt-virtual-lab/experiments"]:
-        p=Path(p)
-        if p.is_dir() and any(p.glob("*.grc")):
-            _MEM["exp_dir"]=p; _cache_set_expdir_disk(p); return p
-    return None
-
 # --------------- find GRC (exe or .lnk) ---------------
 def find_gnuradio_companion() -> str | None:
     if _MEM["grc_path"] and _is_grc_launcher(_MEM["grc_path"]):
@@ -176,19 +128,9 @@ def find_gnuradio_companion() -> str | None:
     path = _which(["where","gnuradio-companion.cmd"]) or _which(["where","gnuradio-companion"]) or _which(["where","gnuradio-companion.exe"])
     if _is_grc_launcher(path):
         _MEM["grc_path"]=path; _cache_set_grc_disk(path); return path
-    for c in [
-        r"C:\GNURadio-3.10\bin\gnuradio-companion.cmd",
-        r"C:\GNURadio-3.10\bin\gnuradio-companion.exe",
-        r"C:\GNURadio-3.9\bin\gnuradio-companion.cmd",
-        r"C:\GNURadio-3.9\bin\gnuradio-companion.exe",
-        r"C:\Program Files\GNURadio\bin\gnuradio-companion.exe",
-        r"C:\Program Files\GNURadio\bin\gnuradio-companion.cmd",
-    ]:
-        if _is_grc_launcher(c):
-            _MEM["grc_path"]=c; _cache_set_grc_disk(c); return c
     return None
 
-# --------------- FAST native spawner (avoids PowerShell) ---------------
+# --------------- subprocess execution helper ---------------
 def _start_process_native(file_path: str, args: list[str] | None = None, workdir: str | None = None) -> tuple[bool, str]:
     try:
         argv = [file_path] + (args or [])
@@ -239,6 +181,45 @@ def _open_with_file_fast(grc_launcher: str, grc_file: str) -> tuple[bool, str]:
 def _open_blank_fast(grc_launcher: str) -> tuple[bool, str]:
     prog, base_args, wd = _pick_module_launch(grc_launcher)
     return _start_process_native(prog, base_args, wd)
+
+def resolve_experiments_dir() -> Path | None:
+    """Resolve and return the experiments directory"""
+    if _MEM["exp_dir"] and _MEM["exp_dir"].is_dir():
+        return _MEM["exp_dir"]
+    
+    # Check environment variable for experiments directory
+    envd = os.getenv("MMT_EXPERIMENTS_DIR")
+    if envd:
+        d = Path(envd)
+        if d.is_dir() and any(d.glob("*.grc")):
+            _MEM["exp_dir"] = d
+            _cache_set_expdir_disk(d)
+            return d
+
+    # Check cached experiments directory
+    d = _cache_get_expdir_disk()
+    if d and d.is_dir() and any(d.glob("*.grc")):
+        _MEM["exp_dir"] = d
+        return d
+
+    # Default directory in the application base path
+    d = app_base_dir() / "experiments"
+    if d.is_dir() and any(d.glob("*.grc")):
+        _MEM["exp_dir"] = d
+        _cache_set_expdir_disk(d)
+        return d
+
+    # Check common locations in the home directory
+    for p in [Path.home() / "Downloads/mmt-virtual-lab/experiments",
+              Path.home() / "mmt-virtual-lab/experiments"]:
+        p = Path(p)
+        if p.is_dir() and any(p.glob("*.grc")):
+            _MEM["exp_dir"] = p
+            _cache_set_expdir_disk(p)
+            return p
+
+    return None
+
 
 # --------------------- threaded launcher ---------------------
 class LaunchWorker(QObject):
@@ -448,8 +429,56 @@ class MainWindow(QMainWindow):
     # Button 1: open selected .grc (threaded)
     def on_open(self):
         name = self.combo.currentText()
+
+        # Resolve the experiment directory to get the full path of the .grc file
+        d = resolve_experiments_dir()
+        if not d:
+            self.status.showMessage("Experiments folder not found.", 8000)
+            return
+
+        # Get the absolute path of the selected experiment file
+        file_abs = d / EXPERIMENTS[name]
+        if not file_abs.exists():
+            self.status.showMessage(f"Flowgraph not found: {file_abs}", 8000)
+            return
+
+        # Debugging: Print the file path
+        print(f"Opening GNU Radio with file: {file_abs}")
+
         # Show buffering FIRST, then worker will validate exp path & launch
         self._launch_in_thread("file", exp_name=name)
+
+        # Ensure we're calling the correct executable to launch the file
+        grc_path = find_gnuradio_companion()  # Get the path of the GNU Radio Companion executable
+        if not grc_path:
+            self.status.showMessage("GNU Radio Companion was not found.", 8000)
+            return
+
+        # Debugging: Print the executable path
+        print(f"Launching GNU Radio from: {grc_path}")
+
+        # Now we use subprocess to run the `gnuradio-companion` with the file path
+        try:
+            result = subprocess.run([grc_path, str(file_abs)], capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Error: {result.stderr}")  # Error message from stderr
+                print(f"Output: {result.stdout}")  # Output from stdout
+            else:
+                print(f"Success: {result.stdout}")  # If successful, print stdout
+        
+            # Debugging: Check the output from the command
+            print("GNU Radio Companion output:")
+            print(result.stdout)  # stdout output
+            print(result.stderr)  # stderr output
+        
+            self.status.showMessage(f"Opening {file_abs}", 8000)
+        except subprocess.CalledProcessError as e:
+            # Capture and display the error
+            self.status.showMessage(f"Failed to open GRC file: {e}", 8000)
+            print(f"Error: {e}")
+            print(f"Stdout: {e.stdout}")
+            print(f"Stderr: {e.stderr}")
+
 
     # Button 2: open blank (threaded)
     def on_open_blank(self):
