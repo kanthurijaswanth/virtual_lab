@@ -1,5 +1,5 @@
 # MMT Virtual Lab — Minimal Qt Launcher (PySide6)
-# Optimized: instant "Opening…" dialog, background launch thread, in-memory caching, min display time.
+# Optimized threading + fixed 2s buffer dialog + logo above title.
 # Button 1: open selected .grc via: pythonw.exe -m gnuradio.grc "<file>"
 # Button 2: open blank GRC via:      pythonw.exe -m gnuradio.grc
 
@@ -7,7 +7,7 @@ import os, sys, json, shlex, subprocess, time
 from pathlib import Path
 from typing import Optional, Tuple, List
 from PySide6.QtCore import Qt, QTimer, QThread, QObject, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QComboBox, QPushButton,
     QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QSpacerItem, QSizePolicy,
@@ -19,7 +19,7 @@ APP_BRAND  = "MMT Virtual Lab"
 PRIMARY = "#0A66C2"; SURFACE = "#FFFFFF"; TEXT = "#111111"; MUTED = "#6B7280"; ACCENT_BG = "#F3F6FB"
 
 # ----- Tweak these -----
-CLOSE_AFTER_SUCCESS_MS = 2000  # increase/decrease to control how long the "Opening..." stays visible on success
+CLOSE_AFTER_SUCCESS_MS = 2000  # keep the "Opening..." dialog for this long after success
 PREFERRED_LNK = r"C:\Users\Jaswanth Royal\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\GNU Radio 3.9.4\GNU Radio.lnk"
 
 EXPERIMENTS = {
@@ -34,6 +34,7 @@ QSS = f"""
 * {{ font-family: 'Segoe UI', Arial; color: {TEXT}; }}
 QMainWindow {{ background: {SURFACE}; }}
 QFrame#Header {{ background: {PRIMARY}; border: none; }}
+QLabel#Logo {{ margin: 6px 0; }}
 QLabel#Brand {{ color: white; font-size: 18px; font-weight: 700; }}
 QLabel#Subtitle {{ color: white; font-size: 12px; }}
 QFrame.Card {{ background: {ACCENT_BG}; border-radius: 12px; }}
@@ -58,6 +59,17 @@ def _load_json(p: Path) -> dict:
 def _save_json(p: Path, data: dict):
     try: p.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception: pass
+
+# Find logo file (assets/mmt_logo.png preferred)
+def _logo_path() -> Optional[Path]:
+    candidates = [
+        app_base_dir() / "assets" / "mmt_logo.png",
+        app_base_dir() / "mmt_logo.png",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
 
 # in-memory hot cache (fast)
 _MEM = {
@@ -284,14 +296,40 @@ class MainWindow(QMainWindow):
         root = QWidget(); self.setCentralWidget(root)
         outer = QVBoxLayout(root); outer.setContentsMargins(16,16,16,16); outer.setSpacing(14)
 
+        # ---------- Header with LOGO above text ----------
+        # ---------- Header with LOGO above text (LEFT aligned) ----------
         header = QFrame(objectName="Header")
-        hl = QHBoxLayout(header); hl.setContentsMargins(16,12,16,12)
+        hl = QVBoxLayout(header)  # vertical: logo -> brand -> subtitle
+        hl.setContentsMargins(16, 12, 16, 12)
+        hl.setSpacing(6)
+        # Align the whole column to the LEFT
+        hl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        logo_lbl = QLabel(objectName="Logo")
+        # LEFT align the image
+        logo_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        lp = _logo_path()
+        if lp:
+            pm = QPixmap(str(lp))
+            if not pm.isNull():
+                pm = pm.scaledToHeight(120, Qt.SmoothTransformation)  # tweak height if needed
+                logo_lbl.setPixmap(pm)
+        else:
+            logo_lbl.setText("")
+
         brand = QLabel(APP_BRAND, objectName="Brand")
+        brand.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
         sub = QLabel("Signal Processing Experiments (AM, FM, FSK, QPSK, 16-QAM)", objectName="Subtitle")
         sub.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        hl.addWidget(brand, 0, Qt.AlignLeft); hl.addStretch(1); hl.addWidget(sub, 0, Qt.AlignRight)
+
+        hl.addWidget(logo_lbl)
+        hl.addWidget(brand)
+        hl.addWidget(sub)
         outer.addWidget(header)
 
+
+        # ---------- Card ----------
         card = QFrame(); card.setObjectName("Card"); card.setProperty("class", "Card")
         card_l = QVBoxLayout(card); card_l.setContentsMargins(16,16,16,16); card_l.setSpacing(10)
 
@@ -314,8 +352,10 @@ class MainWindow(QMainWindow):
         hint.setStyleSheet(f"color: {MUTED};"); card_l.addWidget(hint)
 
         outer.addWidget(card)
+
+        # ---------- Footer ----------
         footer = QHBoxLayout(); footer.addItem(QSpacerItem(20,20,QSizePolicy.Expanding,QSizePolicy.Minimum))
-        foot = QLabel("© MakeMyTechnology"); foot.setStyleSheet(f"color: {MUTED};"); footer.addWidget(foot, 0, Qt.AlignRight)
+        foot = QLabel(" MakeMyTechnology"); foot.setStyleSheet(f"color: {MUTED};"); footer.addWidget(foot, 0, Qt.AlignRight)
         outer.addLayout(footer)
 
     def _prewarm(self):
@@ -348,7 +388,6 @@ class MainWindow(QMainWindow):
             self._active_dlg = None
         QTimer.singleShot(delay_ms, _finish)
 
-
     # ---------- thread orchestration ----------
     def _launch_in_thread(self, mode: str, exp_name: Optional[str] = None):
         # Close any previously stuck dialog (paranoia)
@@ -359,7 +398,7 @@ class MainWindow(QMainWindow):
             self._active_dlg = None
 
         # 1) Show buffering immediately (GUI thread)
-        dlg, t0 = self._show_buffering("Opening GNU Radio…")
+        dlg, _ = self._show_buffering("Opening GNU Radio…")
         self._active_dlg = dlg  # keep a handle for safety
 
         # 2) Prepare worker + thread
@@ -383,7 +422,7 @@ class MainWindow(QMainWindow):
                 self._active_dlg = None
                 QMessageBox.critical(self, "Launch failed", msg)
             else:
-                # Close after minimum buffer on success
+                # Close after the fixed 2s buffer on success
                 self._close_buffering_after(dlg, CLOSE_AFTER_SUCCESS_MS)
             self._thr.quit()
 
